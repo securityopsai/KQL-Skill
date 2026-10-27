@@ -1,0 +1,31 @@
+name: checks
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        working-directory: skill
+        run: python3 -B -m unittest discover -s tests -v
+      - name: Lint self-test
+        working-directory: skill
+        run: python3 scripts/kql_lint.py --selftest
+      - name: Lint references and SKILL.md
+        working-directory: skill
+        run: python3 scripts/kql_lint.py --hunt references/*.md SKILL.md
+      - name: Lint worked use case
+        run: |
+          python3 skill/scripts/kql_lint.py --platform xdr usecases/zscaler-lan-proxy-bypass/D*.kql
+          python3 skill/scripts/kql_lint.py --platform sentinel usecases/zscaler-lan-proxy-bypass/*.yaml
+      - name: Build use-case fixtures
+        run: |
+          for f in usecases/zscaler-lan-proxy-bypass/tests/fixtures/D1b_*.json; do
+            python3 skill/scripts/kql_test_harness.py --query usecases/zscaler-lan-proxy-bypass/D1b-proxy-set-by-command-line.kql --fixture "$f" --out-dir /tmp/build
+          done
+          python3 skill/scripts/kql_test_harness.py --query usecases/zscaler-lan-proxy-bypass/D2-browser-traffic-to-rare-lan-proxy.kql --fixture usecases/zscaler-lan-proxy-bypass/tests/fixtures/D2_tp_proxied_browsing.json --out-dir /tmp/build
