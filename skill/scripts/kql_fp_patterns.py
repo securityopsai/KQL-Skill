@@ -278,6 +278,56 @@ let threshold = {threshold};
 | extend Canon = replace_string(replace_string(ProcessCommandLine, '"', ''), ',', ' ')
 | where Canon contains "{term_1}" and Canon contains "{term_2}\"""",
         "params": ["base_table", "file_names", "term_1", "term_2"]
+    },
+
+    "recurring_baseline_suppress": {
+        "description": "Suppress periodic system noise (GPO refresh, service restarts, scheduled jobs): alert only when this exact (entity, change) was seen fewer than N times in the baseline. queryPeriod must equal the baseline.",
+        "template": """let Baseline      = {baseline};        // = queryPeriod
+let AlertWindow   = {alert_window};    // = queryFrequency
+let MinRecurrence = {min_recurrence};  // seen this often before -> periodic, not an attack. TUNABLE
+let Events = {base_table}
+| where TimeGenerated > ago(Baseline)
+| where {filter};
+let Recurring = Events
+| where ingestion_time() <= ago(AlertWindow)
+| summarize PriorOccurrences = count(), FirstSeen = min(TimeGenerated) by {key_fields};
+Events
+| where ingestion_time() > ago(AlertWindow)
+| join kind=leftouter Recurring on {key_fields}
+| extend PriorOccurrences = coalesce(PriorOccurrences, 0)
+| where PriorOccurrences < MinRecurrence""",
+        "params": ["baseline", "alert_window", "min_recurrence", "base_table", "filter", "key_fields"]
+    },
+
+    "learned_silence_threshold": {
+        "description": "Telemetry-silence detection with a per-entity threshold learned from the baseline (max gap x factor, between a floor and a ceiling) instead of one fixed timeout for every host.",
+        "template": """let Baseline  = {baseline};   // = queryPeriod
+let Floor     = {floor};
+let Ceiling   = {ceiling};
+let GapFactor = {gap_factor};
+let Binned = {base_table}
+| where TimeGenerated > ago(Baseline)
+| where {filter}
+| summarize LastEvent = max(TimeGenerated) by {entity_field}, Bin = bin(TimeGenerated, 5m);
+Binned
+| sort by {entity_field} asc, Bin asc
+| extend Gap = iff(prev({entity_field}) == {entity_field}, Bin - prev(Bin), timespan(null))
+| summarize LastEvent = max(LastEvent), MaxBaselineGap = max(Gap) by {entity_field}
+| extend Threshold = min_of(Ceiling, max_of(Floor, MaxBaselineGap * GapFactor))
+| extend SilentFor = now() - LastEvent
+| where SilentFor > Threshold
+| extend TimeGenerated = now()""",
+        "params": ["baseline", "floor", "ceiling", "gap_factor", "base_table", "filter", "entity_field"]
+    },
+
+    "machine_actor_self_maintenance": {
+        "description": "Drop changes a service makes to its own objects under its machine account (service start, update, CRL publish) while keeping every change by a user account.",
+        "template": """| extend IsMachineActor = {actor_field} endswith "$"
+    or {actor_field} in~ ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE")
+| extend ActorHost = tolower(trim_end(@"\\$", {actor_field}))
+// benign only when the machine account touches ITS OWN object with a maintenance attribute
+| where not(IsMachineActor and {benign_condition})""",
+        "params": ["actor_field", "benign_condition"]
     }
 }
 

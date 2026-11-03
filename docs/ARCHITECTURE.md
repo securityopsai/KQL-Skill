@@ -4,19 +4,21 @@ The skill follows progressive disclosure: `SKILL.md` is always loaded when the s
 references are loaded only when the router sends Claude to them; the scripts run without being loaded.
 
 ```
-SKILL.md (router, ~2,000 words)
+SKILL.md (router, ~2,400 words)
  ├─ Reference routing table ──► references/*.md (loaded per task)
- ├─ Nine quality gates
+ ├─ Ten quality gates
  ├─ Hunting workflow
+ ├─ Rule-pack rework from an incident export
  ├─ FP triage process + fix selection matrix
  ├─ Quick-reference patterns
  └─ Validation checklist
 scripts/
  ├─ kql_text.py          lexer: strings (ordinary, verbatim, triple-backtick), line and block comments → code / comment views
  ├─ kql_lint.py          heuristic checks over the lexed views; per-line suppression; markdown fence support; self-test
+ ├─ sentinel_template_lint.py  ARM/JSON/YAML rule templates vs the limits the Sentinel API enforces at create time
  ├─ kql_test_harness.py  fixture → datatable shadowing, now()/ago()/ingestion_time() rewriting, emit or run, assertions
- └─ kql_fp_patterns.py   23 parameterised templates (exclusions, windows, baselines, fingerprints, bridges, fences)
-tests/test_helpers.py    38 offline regression tests covering the lexer, harness, lint and patterns
+ └─ kql_fp_patterns.py   26 parameterised templates (exclusions, windows, baselines, recurrence, learned silence, fingerprints, bridges, fences)
+tests/test_helpers.py    43 offline regression tests covering the lexer, harness, lint, template lint and patterns
 evals/                   5 cases: prompt.md, case.yaml, graders/, files/ (skill-creator / claude plugin eval layout)
 ```
 
@@ -31,6 +33,7 @@ evals/                   5 cases: prompt.md, case.yaml, graders/, files/ (skill-
 | `identity-email-patterns.md` | Entra, M365, MDO | result-code classification, flow fingerprints, token replay, audit-log parsing by name, mailbox and URL chains |
 | `xdr-custom-detections.md` | XDR rules | required columns and bridging, frequency/lookback pairs, 150-alert cap, dedup semantics, NRT restrictions, XDR-only functions, auditing the platform |
 | `detection-as-code.md` | repos, CI, tests, reuse | layout, full Sentinel YAML contract, entity-mapping discipline, CI gates and lint list, fixture classes, watchlist taxonomy, functions, summary rules |
+| `sentinel-platform-contract.md` | Sentinel templates, imports, deployment failures | API limits for alert-detail formats, custom details, entity mappings, scheduling, grouping, MITRE fields and `apiVersion`, hunting-query (`savedSearches`) packaging, semantic validation against the workspace |
 | `documentation-templates.md` | documenting | detection specification, hunt header, report-pack page, change record, FP worksheet, client report, watchlist schema, benign-true-positive taxonomy |
 
 ## Design decisions

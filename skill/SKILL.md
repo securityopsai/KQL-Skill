@@ -1,6 +1,6 @@
 ---
 name: sentinel-fp-workflow
-description: KQL detection engineering and threat hunting for Microsoft Sentinel and Defender XDR. Covers writing analytics rules and custom detections, hunting-query patterns (first-seen, prevalence, beaconing, anomaly, sequence, flow fingerprinting) and promoting a hunt to a detection, rule windows and ingestion delay, baselines and dedup, KQL performance, operator gotchas and platform deltas, identity/email idioms, unit testing with mock data, detection-as-code (CI/CD, YAML, lint, ASIM/functions/watchlists/summary rules), FP triage and tuning, exclusion logic, and documentation standards. Use when writing or reviewing KQL detection rules or hunting queries, converting a threat report into queries, tuning analytics rules, building XDR custom detections, testing detection logic, analyzing alert noise, or managing FP ratios for client reporting.
+description: KQL detection engineering and threat hunting for Microsoft Sentinel and Defender XDR. Covers analytics rules and custom detections, hunting patterns (first-seen, prevalence, beaconing, anomaly, sequence, flow fingerprinting) and hunt-to-detection promotion, rule windows and ingestion delay, baselines and dedup, KQL performance and gotchas, identity/email idioms, unit testing with mock data, detection-as-code (CI/CD, YAML, lint, ASIM/functions/watchlists/summary rules), FP triage, exclusions, documentation, and the Sentinel platform contract (ARM/JSON/Bicep/YAML import, alert-detail formats, custom details, entity mappings, scheduling and MITRE limits). Use when writing or reviewing KQL rules or hunts, turning a threat report into queries, tuning or reworking rules from an incident export, restructuring a rule pack, building XDR custom detections, testing detection logic, analyzing alert noise, managing FP ratios for client reporting, or when a Sentinel rule template import fails or is about to be imported.
 ---
 
 # KQL Detection Engineering, Hunting & FP Workflow
@@ -21,6 +21,7 @@ skill writes rules, tests and documents, it does not deploy or take response act
 | Identity (Entra), token, audit-log parsing, email (MDO) idioms | `references/identity-email-patterns.md` |
 | Defender XDR custom detection (required columns, NRT, dedup, response actions) | `references/xdr-custom-detections.md` |
 | Rule repos, YAML contract, CI lint, unit testing, watchlists/functions/summary rules | `references/detection-as-code.md` |
+| Building, editing or importing a Sentinel rule template (ARM/JSON/Bicep/YAML), packaging hunting queries, or an import/deployment failed | `references/sentinel-platform-contract.md` + run `scripts/sentinel_template_lint.py` |
 | Detection specification, hunt header, report-pack page, change record, FP worksheet, BTP taxonomy | `references/documentation-templates.md` |
 
 Scripts:
@@ -29,6 +30,11 @@ Scripts:
   (bare `join`, unbounded `make_set`, short terms, positional indexing, platform column drift,
   zero-overlap windows, placeholders, full-sample `has_all`). Run on every `.kql` and on each
   ` ```kql ` block of a `.md`; `--selftest` to verify.
+- `scripts/sentinel_template_lint.py` — lint an ARM template / resource list / rule YAML against the
+  limits the Sentinel API enforces at create time (placeholder counts, custom details, entity
+  mappings, enums, scheduling, grouping, GUIDs, `subTechniques` on a GA `apiVersion`, non-ARM members
+  such as an export's `id`), and lints hunting-query (`savedSearches`) resources too. Run it on every
+  file you hand over, single files included.
 - `scripts/kql_test_harness.py` — build unit-test queries from fixtures (datatable substitution, pinned `now()`/`ago()`, explicit `__ingestion_time` fixture column when the query uses `ingestion_time()`), emit or run. Emission is not a passing test; the query still needs a KQL engine.
 - `scripts/kql_text.py` — string/comment-aware lexical helper shared by the lint and the harness; not a KQL parser.
 - `tests/test_helpers.py` — offline regression tests for the scripts: `python3 -B -m unittest discover -s tests -v` from the skill directory.
@@ -57,15 +63,27 @@ Every new or modified rule must pass ALL gates before deploy. A failed gate is a
 6. **Platform contract met** — Sentinel: entity mappings whose columns exist case-sensitively in the
    final projection, grouping/suppression, version bump. XDR: `Timestamp`/`ReportId`/`DeviceId`
    (bridged via `DeviceInfo` for TVM tables), valid frequency/lookback pair, NRT restrictions, dedup
-   key documented. See `references/xdr-custom-detections.md`.
+   key documented. See `references/xdr-custom-detections.md`. Sentinel templates:
+   `scripts/sentinel_template_lint.py` passes on the artifact that will be imported. The API rejects
+   the whole deployment for any one of: more than 3 `{{Column}}` placeholders in an alert name or
+   description format, more than 20 custom details, more than 10 entity mappings or 3 identifiers per
+   entity, frequency longer than period or either outside 5 min – 14 d, a sub-technique in
+   `techniques`, `subTechniques` on a GA `apiVersion` (only `-preview` versions have it – use
+   `2023-12-01-preview`), a severity outside Informational/Low/Medium/High (no Critical), grouping by
+   an entity the rule does not map. For GUI deployment through *Deploy a custom template*, drop the
+   export's resource-level `id`. Full list and the reasons in `references/sentinel-platform-contract.md`.
 7. **Unit tested** — true positive (for report-derived rules: the report's own sample), benign
    lookalike, threshold boundary (n-1 / n / n+1), empty input; one fixture set per platform variant.
    Use `scripts/kql_test_harness.py`; lint first with `scripts/kql_lint.py`.
-8. **Documented** — detection specification per `references/documentation-templates.md` incl.
+8. **Run on the target workspace** — the Sentinel API validates KQL semantically against the
+   workspace when the rule is created, so a missing table, saved function or column fails the
+   import, not the first run. Paste the resolved query into Logs with the rule's `queryPeriod` as the
+   range before you import.
+9. **Documented** — detection specification per `references/documentation-templates.md` incl.
    data sources with ActionType, permission required, **blind spots** (write "None expected." only
    after assessing; otherwise "Not yet assessed" plus the gap), precision/coverage statement,
    version history with impact; PR-reviewed. Never invent a measured precision rate.
-9. **Response actions earn their precision** — any rule wired to isolate/purge/disable states a
+10. **Response actions earn their precision** — any rule wired to isolate/purge/disable states a
    measured TP rate and a kill switch.
 
 ## Hunting Workflow
@@ -84,6 +102,35 @@ Every new or modified rule must pass ALL gates before deploy. A failed gate is a
    **no** severity or scheduling fields. ep3p's convention (same function is a hunt when
    `query_frequency == query_period`, a detection when `<`) is a useful design habit, not a platform
    rule: a scheduled detection may legitimately have equal frequency and period.
+
+## Reworking a Rule Pack from an Incident Export
+
+The common request: "here are the rules and here are N incidents, they are all false positives, fix
+the rules". Work from the data, not from the rule text:
+
+1. **Profile the incidents per rule** — count, distinct hosts/accounts, cadence (median gap between
+   incidents per entity), time-of-day, first==last activity. A rule firing per host every 90–120
+   minutes under a machine account is a periodic system process (Group Policy refresh, service
+   restart), not an actor. A rule whose incidents show a 1970-01-01 timestamp or an empty field in
+   the title has a query/data-shape bug, not a detection problem.
+2. **Classify each cluster** (TP / BTP / FP) and name the root cause in one line. The fix follows
+   from the cause (matrix below); do not start by adding exclusions.
+3. **Keep what the data cannot see** — rules with zero incidents are not "fine"; review their logic
+   once (string matching, `has` vs `contains` on compound provider names, thresholds inside the
+   lookback) and leave them otherwise unchanged. Say so.
+4. **Keep rule GUIDs** when renaming or renumbering so the import updates in place and incident
+   history stays attached. A rule you split out gets a new, deterministic GUID.
+5. **Generate the template from source** (KQL files + a build script), lint it with
+   `scripts/sentinel_template_lint.py`, and deliver the queries standalone too so they can be pasted
+   into Logs. Export disabled. Split hunts out: a disabled "hunt-only" rule goes into a separate
+   hunting-query template (`savedSearches`, see `references/sentinel-platform-contract.md`). Deliver
+   one combined file per kind plus one import file per rule and per hunt.
+6. **Learn tenant facts, don't hard-code them** – internal domains, admin accounts and hosts come
+   from the data (for example, member-UPN suffixes from `SigninLogs`), with an optional override list
+   that is empty by default. Check the learned set for poisoning paths, and keep its lookback within
+   `queryPeriod`.
+7. **Record expected effect per rule** against the sample ("would have produced 0 of the 1,887") and
+   list what must be verified on the live workspace.
 
 ## FP Triage Process
 
@@ -108,6 +155,11 @@ Every new or modified rule must pass ALL gates before deploy. A failed gate is a
 | Duplicate alerts across runs | Stable event/entity keys + run window (XDR dedup key; Sentinel incident grouping). Sentinel `suppressionEnabled` pauses the *whole rule*, not one entity — use it only when that coverage loss is intended | Low–Medium |
 | Missed events / late alerts | Ingestion-delay window (`ingestion_time()`), `query_wait` | Medium |
 | Quiet entity alerts on 1 → 2 | Floor the threshold; absolute floor beside anomaly sensitivity | Low |
+| Periodic system noise under a machine account (GPO refresh 4719, service-start config rewrites) | Recurrence baseline: alert only when the (entity, change) was seen < N times in the lookback; user-account actors always alert (`rule-windows-and-baselines.md` §4) | Medium |
+| Service maintaining its own objects (CA publishing its CRL, host updating its own AD entry) | Exclude only machine actor + own object + maintenance attribute; everything else unchanged | Medium |
+| "Silence" rule on an event-driven log, or fixed timeout longer than the lookback | Drop the stream or learn a per-entity threshold from the baseline; never-seen becomes a daily coverage finding | Low |
+| Single operational error treated as an incident (one rejected NDES request) | Burst threshold per entity per run | Low |
+| Tamper rule scoped to the whole workspace (any rule edit, any admin) | Scope to the pack's own GUIDs; exclude the named change process; deletes always alert | Low |
 
 Rule of thumb: prefer the fix that does NOT require a rule redeploy (watchlist, automation rule)
 when the exclusion is data, and a query change when the exclusion is logic. Never copy-paste
@@ -144,10 +196,12 @@ T | where Timestamp > ago(2d) | join kind=leftanti known on DeviceId, FileName
 
 - [ ] `scripts/kql_lint.py` clean on every platform variant
 - [ ] Unit fixtures pass: TP (incl. report sample) fires, benign lookalike does not, boundary cases correct, empty input safe
-- [ ] Test query with 7-day lookback against live data; expected volume ≪ 150/run (XDR)
+- [ ] `scripts/sentinel_template_lint.py` passes on the exact artifact being imported (Sentinel)
+- [ ] Each query run in Logs on the **target** workspace with the rule's `queryPeriod`; expected volume ≪ 150/run (XDR)
 - [ ] Windows: frequency ≤ period ≤ 14 d (Sentinel); ingestion-delay handling present; baseline excludes alert window
 - [ ] Exclusion doesn't suppress known-bad patterns (TP fixture still fires); blind-spot line written
 - [ ] Entity mappings / required columns intact after the change; dedup key still matches projection
 - [ ] Resource indicator not "High"; no `FileProfile`/`SeenBy` in a rule meant for Sentinel
 - [ ] Version bumped, change record written, peer review done
+- [ ] Imported disabled; enabled one rule at a time
 - [ ] Document expected FP reduction %; schedule 7-day post-deploy review

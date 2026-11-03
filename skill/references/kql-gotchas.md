@@ -38,6 +38,11 @@ official content. Each line is a review item. Performance rules live in `kql-per
 | `and`/`or` chains without parentheses (Sigma conversions) | `A or B and C` binds as `A or (B and C)` | Parenthesise every mixed chain |
 | `parse` vs `parse-where` | `parse` keeps non-matching rows with empty columns | `parse-where` when the match is the filter |
 | `has_all (0, 50140)` on `make_set(ResultType)` | Works via term match on numeric codes; risky on free text | `set_has_element()` / `array_index_of() >= 0` for exact membership |
+| `has` on part of a compound name (`Provider has "OnlineResponder"`) | `has` matches whole terms; it never matches `Microsoft-Windows-OnlineResponderRevocationProvider` | Exact provider names with `in~`, or `has_any` with the full provider strings |
+| `coalesce(tostring(EventData.A), tostring(EventData.B))` | `tostring()` of a missing dynamic field is `""`, not null, and `coalesce()` only skips nulls → returns `""` | `iff(isempty(a), b, a)` for "first non-empty" |
+| Tabular `in (Table)` inside `extend` / `case()` | Works in `where` only | `toscalar(Table \| summarize make_list(Col))` to get a dynamic array |
+| Fixed silence threshold longer than `queryPeriod` | Can only ever fire on "never seen"; `max()` of nothing is null → 1970-01-01 in the alert | Learned per-entity threshold inside the lookback (`rule-windows-and-baselines.md` §4) |
+| `{{Column}}` printed empty in an alert title ("entry '' changed") | Column missing from the **final** output — a projection bug, not event data | Project every column a format, custom detail or entity names; `scripts/sentinel_template_lint.py` |
 | Shadowed `let` names in one file / undefined variables / missing commas in `dynamic([...])` / smart quotes / `ago(1hr)` / UTF-16 BOM files | Will not parse | Offline parse gate in CI on **every** platform variant |
 
 ## 2. Platform deltas: Defender XDR vs Sentinel

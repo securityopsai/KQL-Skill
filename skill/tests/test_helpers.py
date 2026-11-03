@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import kql_fp_patterns as patterns
 import kql_lint as lint
 import kql_test_harness as harness
+import sentinel_template_lint as template_lint
 from kql_text import rewrite_time_calls, segments, time_calls, views
 
 
@@ -262,6 +263,50 @@ class PatternTests(unittest.TestCase):
                 q=patterns.generate_pattern(name,{key:'X' for key in p['params']})
                 self.assertTrue(q.strip())
                 list(segments(q))
+
+
+def scheduled_rule(**overrides):
+    rule = {
+        'type': 'Microsoft.OperationalInsights/workspaces/providers/alertRules',
+        'apiVersion': '2023-12-01-preview',
+        'name': "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9')]",
+        'kind': 'Scheduled',
+        'properties': {
+            'displayName': 'Test rule', 'enabled': False, 'severity': 'Medium',
+            'query': 'SecurityEvent | where EventID == 4719 | project TimeGenerated, Computer',
+            'queryFrequency': 'PT1H', 'queryPeriod': 'PT2H',
+            'triggerOperator': 'GreaterThan', 'triggerThreshold': 0,
+            'suppressionEnabled': False, 'suppressionDuration': 'PT5H',
+            'tactics': ['DefenseEvasion'], 'techniques': ['T1562'],
+            'entityMappings': [{'entityType': 'Host', 'fieldMappings': [
+                {'identifier': 'HostName', 'columnName': 'Computer'}]}]}}
+    rule['properties'].update(overrides)
+    return rule
+
+
+class TemplateLintTests(unittest.TestCase):
+    def errors(self, rule):
+        return [w for r in template_lint.check_template([rule]) for _, w, _ in r.errors]
+
+    def test_clean_rule_has_no_errors(self):
+        self.assertEqual(self.errors(scheduled_rule()), [])
+
+    def test_more_than_three_format_placeholders_is_an_error(self):
+        rule = scheduled_rule(alertDetailsOverride={
+            'alertDescriptionFormat': '{{A}} {{B}} {{C}} {{Computer}}'})
+        self.assertTrue(any('alertDescriptionFormat' in w for w in self.errors(rule)))
+
+    def test_critical_severity_is_an_error(self):
+        self.assertIn('severity', self.errors(scheduled_rule(severity='Critical')))
+
+    def test_subtechniques_on_ga_api_version_is_an_error(self):
+        rule = scheduled_rule(subTechniques=['T1562.002'])
+        rule['apiVersion'] = '2024-03-01'
+        self.assertIn('apiVersion', self.errors(rule))
+
+    def test_duplicate_guid_is_an_error(self):
+        results = template_lint.check_template([scheduled_rule(), scheduled_rule()])
+        self.assertTrue(any(w == 'name' for r in results for _, w, _ in r.errors))
 
 
 if __name__ == '__main__':

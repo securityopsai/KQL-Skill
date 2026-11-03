@@ -12,7 +12,7 @@ existing skill of that name rather than adding a duplicate.
 |---|---|
 | Platforms | Sentinel scheduled and NRT analytics rules, Defender XDR custom detections, advanced hunting |
 | What it produces | KQL detections and hunts, Sentinel rule YAML, detection specifications, unit-test fixtures, FP triage records |
-| Tooling | `kql_lint.py` (static checks), `kql_test_harness.py` (fixture-based unit tests), `kql_fp_patterns.py` (23 snippet generators) |
+| Tooling | `kql_lint.py` (static checks), `sentinel_template_lint.py` (Sentinel template API limits), `kql_test_harness.py` (fixture-based unit tests), `kql_fp_patterns.py` (26 snippet generators) |
 | Evidence base | ~5,000 hunting queries and detection rules from 24 public repositories, verified against Microsoft Learn |
 | Measured effect | 100% assertion pass rate with the skill vs 77% without, on five blind-graded tasks (see [docs/EVALS.md](docs/EVALS.md)) |
 
@@ -26,7 +26,7 @@ existing skill of that name rather than adding a duplicate.
 
 ```bash
 cd skill
-python3 -B -m unittest discover -s tests -v          # 38 offline regression tests for the scripts
+python3 -B -m unittest discover -s tests -v          # 43 offline regression tests for the scripts
 python3 scripts/kql_lint.py --selftest                # lint self-test
 python3 scripts/kql_lint.py --platform xdr my_rule.kql
 python3 scripts/kql_test_harness.py --query my_rule.kql --fixture-dir tests/fixtures/my_rule --out-dir build/
@@ -37,8 +37,8 @@ python3 scripts/kql_test_harness.py --query my_rule.kql --fixture-dir tests/fixt
 ```
 skill/                        the skill
   SKILL.md                    router: quality gates, hunting workflow, FP triage, fix matrix, checklist
-  references/                 eight reference files loaded on demand (see docs/ARCHITECTURE.md)
-  scripts/                    kql_lint.py, kql_test_harness.py, kql_fp_patterns.py, kql_text.py
+  references/                 nine reference files loaded on demand (see docs/ARCHITECTURE.md)
+  scripts/                    kql_lint.py, sentinel_template_lint.py, kql_test_harness.py, kql_fp_patterns.py, kql_text.py
   tests/                      offline regression tests for the scripts
   evals/                      five test cases with prompts, input files and assertions
 usecases/

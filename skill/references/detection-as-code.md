@@ -136,9 +136,16 @@ and enforce it, silent drift is the failure mode.
    on single-reference lets; `prev()` without partitioned `order by`; `search`/`union *`/`take`;
    tenant placeholders; `TimeGenerated` in an XDR block / `Timestamp` in a Sentinel block; both
    platform variants parsed (dual copies drift in ≈5 % of files); exact-string Entra operation names.
+   Sentinel ARM/JSON/YAML templates: `scripts/sentinel_template_lint.py` on the exact artifact being
+   deployed (alert-format placeholder count, custom-detail / entity-mapping limits, enums, scheduling
+   ranges, grouping references, GUID uniqueness — the full list is in
+   `references/sentinel-platform-contract.md`).
 4. **Unit tests** — fixture-based, below. ~1 s/query against an empty workspace, or
    tenant-free against a local Kusto emulator (ADX emulator container).
 5. **Deploy to dev workspace** — `whatIf`/`Test-AzResourceGroupDeployment` dry-run first.
+   The Sentinel API validates the KQL **semantically against the workspace** at create time, so a
+   missing table/function or a column typo fails here, not on first run. A dev workspace with the
+   same tables (even empty) is the cheapest place to find out.
 6. **E2E smoke (nightly, not per-PR)** — ingest fixtures via Logs Ingestion API, assert
    incident/alert actually fires.
 

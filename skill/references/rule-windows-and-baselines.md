@@ -103,6 +103,31 @@ on mirrored Device*/Email* tables.
    `DeviceInfo`, `OAuthAppInfo`, `AgentsInfo`, and the append-only `SecurityIncident`/`SecurityAlert`
    (every row is a version): `summarize arg_max(TimeGenerated, *) by <id>` before counting or joining,
    or every join fans out.
+8. **Recurrence baseline for periodic system noise** (GPO refresh 4719, service-start config
+   rewrites under a machine account): alert only when this exact (entity, change) was seen fewer
+   than `MinRecurrence` times in the baseline; user-account actors always alert. `queryPeriod` must
+   equal the baseline window; `ingestion_time()` splits "this run" from "history" so each event
+   alerts exactly once. Generator: `kql_fp_patterns.py -p recurring_baseline_suppress`.
+   ```kql
+   let Recurring = Events | where ingestion_time() <= ago(AlertWindow)
+   | summarize PriorOccurrences = count() by Host, SubcategoryGuid, AuditPolicyChanges;
+   Events | where ingestion_time() > ago(AlertWindow)
+   | join kind=leftouter Recurring on Host, SubcategoryGuid, AuditPolicyChanges
+   | where coalesce(PriorOccurrences, 0) < MinRecurrence or not(IsMachineActor)
+   ```
+9. **Learned silence threshold** (telemetry-stopped rules): learn a per-entity threshold from the
+   baseline (max gap × factor, between a floor and a ceiling) instead of one fixed timeout for every
+   host. A fixed timeout longer than `queryPeriod` can only ever fire on "never seen". Drop streams
+   that are event-driven rather than continuous; report never-seen entities as a daily coverage
+   finding, not an alert. Generator: `kql_fp_patterns.py -p learned_silence_threshold`.
+   ```kql
+   Binned
+   | sort by Host asc, Stream asc, Bin asc
+   | extend Gap = iff(prev(Host) == Host and prev(Stream) == Stream, Bin - prev(Bin), timespan(null))
+   | summarize LastEvent = max(LastEvent), MaxBaselineGap = max(Gap) by Host, Stream
+   | extend Threshold = min_of(Ceiling, max_of(Floor, MaxBaselineGap * GapFactor))
+   | where now() - LastEvent > Threshold
+   ```
 
 ## 5. Deduplication across overlapping runs
 
